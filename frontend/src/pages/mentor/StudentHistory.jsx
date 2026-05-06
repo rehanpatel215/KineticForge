@@ -17,6 +17,16 @@ export default function StudentHistory() {
         .order('name');
       setStudents(data || []);
       setLoading(false);
+
+      // Restore last viewed student from session storage if exists
+      const saved = sessionStorage.getItem('last_viewed_student');
+      if (saved) {
+        try {
+          setSelectedStudent(JSON.parse(saved));
+        } catch (e) {
+          console.error("Failed to parse saved student", e);
+        }
+      }
     }
     fetchStudents();
   }, []);
@@ -56,6 +66,7 @@ export default function StudentHistory() {
 
   const handleSelect = (s) => {
     setSelectedStudent(s);
+    sessionStorage.setItem('last_viewed_student', JSON.stringify(s));
     setSearch('');
   };
 

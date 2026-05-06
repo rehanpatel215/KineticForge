@@ -257,8 +257,8 @@ export default function MyAttendance() {
             
             <div className="grid grid-cols-7 gap-3">
               {/* Labels */}
-              {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(d => (
-                <div key={d} className="text-[10px] font-bold text-tertiary text-center mb-1">{d}</div>
+              {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+                <div key={i} className="text-[10px] font-bold text-tertiary text-center mb-1">{d}</div>
               ))}
               
               {/* We'll just render the last 28 sessions for the mini heatmap */}
