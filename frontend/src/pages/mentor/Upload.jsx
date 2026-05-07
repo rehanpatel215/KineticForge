@@ -156,8 +156,21 @@ export default function Upload() {
   const processExcelSheet = (wb, sheetName) => {
     setSelectedSheet(sheetName);
     const worksheet = wb.Sheets[sheetName];
-    const allRows = XLSX.utils.sheet_to_json(worksheet);
-    const headers = XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0];
+    const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+    
+    // Find the first non-empty row to use as headers
+    let headerIndex = 0;
+    while (headerIndex < rawRows.length && (!rawRows[headerIndex] || rawRows[headerIndex].length === 0 || rawRows[headerIndex].every(v => v === null || v === ''))) {
+      headerIndex++;
+    }
+
+    if (headerIndex >= rawRows.length) {
+      setError('No data found in the selected sheet.');
+      return;
+    }
+
+    const headers = rawRows[headerIndex];
+    const allRows = XLSX.utils.sheet_to_json(worksheet, { range: headerIndex });
 
     setParsedData({
       headers: headers,
@@ -183,29 +196,69 @@ export default function Upload() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const startAnalysis = async () => {
+  const startAnalysis = () => {
     if (!parsedData) return;
+
+    // Build an initial mapping instantly
+    const headers = parsedData.headers || [];
+    const initialMapping = {};
+    headers.forEach(h => {
+      if (!h) return;
+      const lower = h.toString().toLowerCase().trim();
+      if (lower.includes('name') && !lower.includes('usn')) {
+        initialMapping[h] = 'student_name';
+      } else if (lower.includes('usn') || lower.match(/^4sh/i)) {
+        initialMapping[h] = 'usn';
+      } else if (lower.includes('email')) {
+        initialMapping[h] = 'email';
+      } else if (lower.includes('admission') || lower.includes('adm')) {
+        initialMapping[h] = 'admission_number';
+      } else if (lower.includes('branch') || lower.includes('dept')) {
+        initialMapping[h] = 'branch_code';
+      } else if (lower.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/) || lower.match(/^\d{5}$/)) {
+        initialMapping[h] = 'date';
+      } else if (lower.includes('date') || lower.includes('session')) {
+        initialMapping[h] = 'date';
+      } else if (lower.includes('status') || lower.includes('present') || lower.includes('attend')) {
+        initialMapping[h] = 'attendance_status';
+      } else {
+        initialMapping[h] = 'IGNORE';
+      }
+    });
+
+    const dateColumnCount = Object.values(initialMapping).filter(v => v === 'date').length;
+    const isPivoted = dateColumnCount >= 3;
+
+    const initialResult = {
+      date_format: 'DD/M/YY',
+      attendance_convention: 'P/A',
+      is_pivoted: isPivoted,
+      confidence: 0.5
+    };
+
+    setUserMapping(initialMapping);
+    setMappingResult(initialResult);
+
+    // Show a brief "AI is mapping..." overlay on step 1, then auto-proceed to validation
     setIsAnalyzing(true);
-    setError(null);
-    try {
-      const result = await analyzeCsvMapping(parsedData.headers, parsedData.rows);
-      setMappingResult(result);
-      setUserMapping(result.mapping || {});
-      setStep(2);
-    } catch (err) {
-      setError('AI mapping failed. You can still map columns manually.');
-      const fallbackMapping = {};
-      parsedData.headers.forEach(h => fallbackMapping[h] = 'IGNORE');
-      setUserMapping(fallbackMapping);
-      setMappingResult({
-        date_format: 'DD/MM/YYYY',
-        attendance_convention: 'P/A',
-        is_pivoted: false
+
+    analyzeCsvMapping(parsedData.headers, parsedData.rows)
+      .then(result => {
+        // AI refined the mapping — use it
+        const finalMapping = result.mapping || initialMapping;
+        const finalResult = { ...initialResult, ...result };
+        setMappingResult(finalResult);
+        setUserMapping(finalMapping);
+        // Auto-proceed straight to preview (skip manual step 2)
+        return autoValidate(finalMapping, finalResult);
+      })
+      .catch(() => {
+        // AI failed — fall back to local mapping and still auto-validate
+        return autoValidate(initialMapping, initialResult);
+      })
+      .finally(() => {
+        setIsAnalyzing(false);
       });
-      setStep(2);
-    } finally {
-      setIsAnalyzing(false);
-    }
   };
 
   const [importHistory, setImportHistory] = useState([]);
@@ -314,84 +367,115 @@ export default function Upload() {
     }
   };
 
+  // Core validation logic — shared by manual and auto flows
+  const runValidation = async (mapping, result) => {
+    const { data: students } = await supabase.from('students').select('*');
+    setDbStudents(students || []);
+
+    const distinctDatesInFile = [...new Set(
+      result.is_pivoted
+        ? Object.keys(mapping).filter(h => mapping[h] === 'date').map(h => parseDate(h, result.date_format))
+        : parsedData.allRows.map(row => {
+            const sourceCol = Object.keys(mapping).find(h => mapping[h] === 'date');
+            return parseDate(row[sourceCol], result.date_format);
+          })
+    )].filter(Boolean);
+
+    const { data: existingSessions } = await supabase
+      .from('sessions')
+      .select('date, topic')
+      .in('date', distinctDatesInFile);
+    setDuplicateSessions(existingSessions || []);
+
+    const candidates = [];
+    const isPivoted = result.is_pivoted;
+    const dateColumns = isPivoted ? Object.keys(mapping).filter(h => mapping[h] === 'date') : [];
+
+    parsedData.allRows.forEach((row, rowIndex) => {
+      if (Object.values(row).every(v => !v)) return;
+      const getField = (fieldName) => {
+        const sourceCol = Object.keys(mapping).find(h => mapping[h] === fieldName);
+        return sourceCol ? row[sourceCol] : null;
+      };
+      const baseRecord = {
+        student_name: getField('student_name'),
+        usn: getField('usn')?.toString().trim().toUpperCase(),
+        admission_number: getField('admission_number'),
+        email: getField('email'),
+        branch_code: getField('branch_code'),
+        rowIndex
+      };
+      if (isPivoted) {
+        dateColumns.forEach(dateCol => {
+          const statusVal = row[dateCol];
+          const present = parseStatus(statusVal, result.attendance_convention);
+          if (present === null) return;
+          const date = parseDate(dateCol, result.date_format);
+          candidates.push({ ...baseRecord, date, present, source_date_col: dateCol });
+        });
+      } else {
+        const dateStr = getField('date');
+        const date = parseDate(dateStr, result.date_format);
+        const statusVal = getField('attendance_status');
+        const present = parseStatus(statusVal, result.attendance_convention);
+        if (present !== null) { candidates.push({ ...baseRecord, date, present }); }
+      }
+    });
+
+    const validated = candidates.map(c => {
+      const errors = [];
+      const info = []; // informational only — won't block import
+      let matchedStudent = null;
+
+      if (!c.student_name && !c.usn) errors.push('No student identifier found');
+      if (!c.date) errors.push('Invalid or missing date');
+      if (c.date && (new Date(c.date) > new Date())) errors.push('Date in future');
+      if (c.date && (new Date(c.date) < new Date('2025-08-04'))) errors.push('Date before program start');
+
+      if (c.usn) {
+        matchedStudent = students.find(s => s.usn === c.usn);
+        // AI auto-decision: USN not in DB → will be created as new student (not a warning)
+        if (!matchedStudent) info.push('New student — will be created on import');
+      } else if (c.student_name) {
+        matchedStudent = students.find(s => s.name.toLowerCase() === c.student_name.toLowerCase());
+        if (!matchedStudent) {
+          // AI auto-decision: try fuzzy match and accept it silently
+          matchedStudent = findFuzzyMatch(c.student_name, students);
+          if (!matchedStudent) info.push('New student — will be created on import');
+        }
+      }
+
+      const status = errors.length > 0 ? 'error' : 'clean';
+      return {
+        ...c,
+        id: `${c.usn || c.student_name}-${c.date}`,
+        matchedStudent,
+        status,
+        issues: errors,   // only real errors shown
+        info              // informational notes (non-blocking)
+      };
+    });
+
+    return validated;
+  };
+
+  // Auto-validate: called after AI mapping resolves (skips step 2 UI)
+  const autoValidate = async (mapping, result) => {
+    try {
+      const validated = await runValidation(mapping, result);
+      setProcessedData(validated);
+      setStep(3);
+    } catch (err) {
+      setError('AI validation failed: ' + err.message);
+      setStep(2); // fall back to manual step if something went wrong
+    }
+  };
+
+  // Manual validate: triggered from step 2 if user is on that page
   const validateData = async () => {
     setIsAnalyzing(true);
     try {
-      const { data: students } = await supabase.from('students').select('*');
-      setDbStudents(students || []);
-      
-      const distinctDatesInFile = [...new Set(
-        mappingResult.is_pivoted 
-          ? Object.keys(userMapping).filter(h => userMapping[h] === 'date').map(h => parseDate(h, mappingResult.date_format))
-          : parsedData.allRows.map(row => {
-              const sourceCol = Object.keys(userMapping).find(h => userMapping[h] === 'date');
-              return parseDate(row[sourceCol], mappingResult.date_format);
-            })
-      )].filter(Boolean);
-
-      const { data: existingSessions } = await supabase
-        .from('sessions')
-        .select('date, topic')
-        .in('date', distinctDatesInFile);
-      
-      setDuplicateSessions(existingSessions || []);
-
-      const candidates = [];
-      const isPivoted = mappingResult.is_pivoted;
-      const dateColumns = isPivoted ? Object.keys(userMapping).filter(h => userMapping[h] === 'date') : [];
-      
-      parsedData.allRows.forEach((row, rowIndex) => {
-        if (Object.values(row).every(v => !v)) return;
-        const getField = (fieldName) => {
-          const sourceCol = Object.keys(userMapping).find(h => userMapping[h] === fieldName);
-          return sourceCol ? row[sourceCol] : null;
-        };
-        const baseRecord = {
-          student_name: getField('student_name'),
-          usn: getField('usn')?.toString().trim().toUpperCase(),
-          admission_number: getField('admission_number'),
-          email: getField('email'),
-          branch_code: getField('branch_code'),
-          rowIndex
-        };
-        if (isPivoted) {
-          dateColumns.forEach(dateCol => {
-            const statusVal = row[dateCol];
-            const present = parseStatus(statusVal, mappingResult.attendance_convention);
-            if (present === null) return;
-            const date = parseDate(dateCol, mappingResult.date_format);
-            candidates.push({ ...baseRecord, date, present, source_date_col: dateCol });
-          });
-        } else {
-          const dateStr = getField('date');
-          const date = parseDate(dateStr, mappingResult.date_format);
-          const statusVal = getField('attendance_status');
-          const present = parseStatus(statusVal, mappingResult.attendance_convention);
-          if (present !== null) { candidates.push({ ...baseRecord, date, present }); }
-        }
-      });
-
-      const validated = candidates.map(c => {
-        const errors = [];
-        const warnings = [];
-        let matchedStudent = null;
-        if (!c.student_name && !c.usn) errors.push('No student identifier found');
-        if (!c.date) errors.push('Invalid or missing date');
-        if (c.date && (new Date(c.date) > new Date())) errors.push('Date in future');
-        if (c.date && (new Date(c.date) < new Date('2025-08-04'))) errors.push('Date before program start');
-        if (c.usn) {
-          matchedStudent = students.find(s => s.usn === c.usn);
-          if (!matchedStudent) warnings.push('USN not found in database');
-        } else if (c.student_name) {
-          matchedStudent = students.find(s => s.name.toLowerCase() === c.student_name.toLowerCase());
-          if (!matchedStudent) {
-            matchedStudent = findFuzzyMatch(c.student_name, students);
-            if (matchedStudent) warnings.push(`Fuzzy match found: ${matchedStudent.name}`);
-            else warnings.push('Name match not found');
-          }
-        }
-        return { ...c, id: `${c.usn || c.student_name}-${c.date}`, matchedStudent, status: errors.length > 0 ? 'error' : warnings.length > 0 ? 'warning' : 'clean', issues: [...errors, ...warnings] };
-      });
+      const validated = await runValidation(userMapping, mappingResult);
       setProcessedData(validated);
       setStep(3);
     } catch (err) { setError('Validation failed: ' + err.message); }
@@ -431,8 +515,31 @@ export default function Upload() {
     setError(null);
     setImportProgress(0);
 
+    let logEntry = null;
     try {
-      const { data: logEntry, error: logError } = await supabase
+      // Guard: check if this exact filename was already successfully imported
+      const { data: existingLog } = await supabase
+        .from('import_log')
+        .select('id, status, uploaded_at')
+        .eq('filename', file.name)
+        .eq('status', 'completed')
+        .maybeSingle();
+
+      if (existingLog) {
+        const importedOn = new Date(existingLog.uploaded_at).toLocaleDateString();
+        const proceed = window.confirm(
+          `"${file.name}" was already imported on ${importedOn}.\n\nImporting again will overwrite existing attendance records for those dates.\n\nContinue?`
+        );
+        if (!proceed) {
+          setStep(3);
+          setIsAnalyzing(false);
+          return;
+        }
+        // Delete the old log entry so the upsert can replace it cleanly
+        await supabase.from('import_log').delete().eq('id', existingLog.id);
+      }
+
+      const { data: newLogEntry, error: logError } = await supabase
         .from('import_log')
         .insert([{
           filename: file.name,
@@ -447,8 +554,12 @@ export default function Upload() {
         .single();
 
       if (logError) throw logError;
+      logEntry = newLogEntry;
 
-      const distinctDates = [...new Set(processedData.map(d => d.date))];
+      const validData = processedData.filter(d => d.status === 'clean');
+      const skippedCount = processedData.length - validData.length;
+
+      const distinctDates = [...new Set(validData.map(d => d.date))];
       const sessionMap = {};
 
       for (const d of distinctDates) {
@@ -472,7 +583,7 @@ export default function Upload() {
       const studentsToUpsert = [];
       const studentMap = {};
 
-      processedData.forEach(row => {
+      validData.forEach(row => {
         if (!row.matchedStudent && row.usn) {
           studentsToUpsert.push({
             name: row.student_name || 'New Student',
@@ -498,8 +609,8 @@ export default function Upload() {
       }
 
       const batches = [];
-      for (let i = 0; i < processedData.length; i += 50) {
-        batches.push(processedData.slice(i, i + 50));
+      for (let i = 0; i < validData.length; i += 50) {
+        batches.push(validData.slice(i, i + 50));
       }
 
       let importedCount = 0;
@@ -519,8 +630,8 @@ export default function Upload() {
 
         if (attError) throw attError;
         
-        importedCount += batch.length;
-        setImportProgress(Math.round((importedCount / processedData.length) * 100));
+        importedCount += attendanceRecords.length;
+        setImportProgress(Math.round((importedCount / validData.length) * 100));
       }
 
       await supabase
@@ -528,7 +639,7 @@ export default function Upload() {
         .update({ 
           status: 'completed', 
           imported_rows: importedCount,
-          skipped_rows: processedData.length - importedCount
+          skipped_rows: skippedCount + (validData.length - importedCount)
         })
         .eq('id', logEntry.id);
 
@@ -549,7 +660,7 @@ export default function Upload() {
   };
 
   const handleNext = () => {
-    if (step === 1 && parsedData) {
+    if ((step === 1 || step === 1.5) && parsedData) {
       startAnalysis();
     } else if (step === 2) {
       validateData();
@@ -577,7 +688,7 @@ export default function Upload() {
             }}
             className="text-sm font-medium text-tertiary hover:text-primary transition-colors flex items-center gap-1"
           >
-            {step === 4 && importResults ? 'Start Over' : `Back to ${steps[Math.floor(step) - 1]?.label}`}
+            {step === 4 && importResults ? 'Start Over' : `Back to ${steps[Math.max(0, Math.floor(step) - 2)]?.label || 'Upload'}`}
           </button>
         )}
       </div>
@@ -585,7 +696,7 @@ export default function Upload() {
       <div className="flex items-center justify-between bg-surface bg-card-gradient border border-subtle rounded-xl p-4 shadow-[var(--shadow-card)]">
         {steps.map((s, i) => (
           <React.Fragment key={s.id}>
-            <div className={`flex items-center gap-3 px-4 py-2 rounded-lg transition-all ${step === s.id ? 'bg-surface-raised text-primary shadow-[var(--shadow-card)] border border-default scale-[1.02]' : 'text-tertiary'}`}>
+            <div className={`flex items-center gap-3 px-4 py-2 rounded-lg transition-all ${(step === s.id || (s.id === 1 && step === 1.5)) ? 'bg-surface-raised text-primary shadow-[var(--shadow-card)] border border-default scale-[1.02]' : 'text-tertiary'}`}>
               <div className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors ${step >= s.id ? 'border-accent-glow text-accent-glow shadow-[0_0_10px_rgba(111,101,255,0.3)]' : 'border-subtle text-tertiary'}`}>
                 {step > s.id ? <CheckCircle2 size={18} /> : <s.icon size={18} />}
               </div>
@@ -598,7 +709,7 @@ export default function Upload() {
         ))}
       </div>
 
-      {step === 1 && (
+      {(step === 1 || step === 1.5) && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             <div 
@@ -642,23 +753,53 @@ export default function Upload() {
               </div>
             )}
             {file && !isAnalyzing && (
-              <div className="flex items-center justify-between p-4 bg-surface-raised border border-default rounded-xl">
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-surface rounded-lg border border-default"><FileText size={20} className="text-accent-glow" /></div>
-                  <div>
-                    <p className="text-sm font-medium text-primary">{parsedData?.allRows.length} rows detected</p>
-                    <p className="text-caption text-tertiary">
-                      {parsedData?.headers.length} columns identified
-                      {selectedSheet && ` • Sheet: ${selectedSheet}`}
-                    </p>
+              <div className="border border-accent-glow/30 bg-accent-glow/5 rounded-xl overflow-hidden animate-in slide-in-from-bottom-2 duration-300">
+                {/* Filename banner */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-accent-glow/20">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-accent-glow/10 rounded-lg shrink-0">
+                      <FileText size={18} className="text-accent-glow" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-primary truncate" title={file.name}>{file.name}</p>
+                      <p className="text-[11px] text-tertiary">{(file.size / 1024).toFixed(1)} KB • {file.name.split('.').pop().toUpperCase()}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeFile(); }}
+                    className="ml-3 p-1.5 rounded-md text-tertiary hover:text-danger hover:bg-danger-bg/20 transition-colors shrink-0"
+                    title="Remove file"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                {/* Row & column stats */}
+                <div className="flex divide-x divide-accent-glow/10">
+                  <div className="flex-1 px-4 py-3">
+                    <p className="text-[10px] text-tertiary uppercase tracking-widest mb-0.5">Rows</p>
+                    <p className="text-sm font-bold text-primary">{parsedData?.allRows.length ?? '—'}</p>
+                  </div>
+                  <div className="flex-1 px-4 py-3">
+                    <p className="text-[10px] text-tertiary uppercase tracking-widest mb-0.5">Columns</p>
+                    <p className="text-sm font-bold text-primary">{parsedData?.headers.length ?? '—'}</p>
+                  </div>
+                  {selectedSheet && (
+                    <div className="flex-1 px-4 py-3">
+                      <p className="text-[10px] text-tertiary uppercase tracking-widest mb-0.5">Sheet</p>
+                      <p className="text-sm font-bold text-primary truncate">{selectedSheet}</p>
+                    </div>
+                  )}
+                  <div className="flex-1 px-4 py-3">
+                    <p className="text-[10px] text-tertiary uppercase tracking-widest mb-0.5">Status</p>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-success"><CheckCircle2 size={12} />Ready</span>
                   </div>
                 </div>
-                <button onClick={removeFile} className="p-2 hover:bg-surface rounded-md text-tertiary hover:text-danger transition-colors"><X size={20} /></button>
               </div>
             )}
             {step === 1.5 && (
-              <div className="bg-surface border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] animate-in slide-in-from-bottom-4">
-                <h3 className="text-h3 text-primary mb-4 flex items-center gap-2"><Layers size={18} className="text-accent-glow" /> Select Worksheet</h3>
+              <div className="bg-accent-glow/5 border border-accent-glow/30 rounded-xl p-6 shadow-[var(--shadow-card)] animate-in slide-in-from-bottom-4">
+                <h3 className="text-h3 text-primary mb-2 flex items-center gap-2"><Layers size={18} className="text-accent-glow" /> Select Worksheet</h3>
+                <p className="text-xs text-secondary mb-4">This workbook has multiple sheets. Select the one with attendance data.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {availableSheets.map(sheet => (
                     <button 
@@ -712,8 +853,35 @@ export default function Upload() {
                 <li className="flex gap-3"><div className="w-5 h-5 rounded-full bg-surface-raised border border-default flex items-center justify-center shrink-0 mt-0.5 text-[10px]">3</div><span>Review and correct mappings before final validation.</span></li>
               </ul>
             </div>
-            <button onClick={handleNext} disabled={!parsedData || isAnalyzing} className="w-full h-[56px] bg-fg-primary text-void rounded-xl font-display font-bold text-[16px] hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center justify-center gap-2 group">
-              {isAnalyzing ? 'Analyzing...' : 'Continue to Mapping'}<ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+            <button onClick={handleNext} disabled={!parsedData} className="w-full h-[56px] bg-fg-primary text-void rounded-xl font-display font-bold text-[16px] hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center justify-center gap-2 group">
+              Continue to Mapping<ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sticky bottom bar: shows when a file is selected on step 1 ── */}
+      {(step === 1 || step === 1.5) && file && !isAnalyzing && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-subtle bg-surface/80 backdrop-blur-md shadow-[0_-4px_24px_rgba(0,0,0,0.3)] animate-in slide-in-from-bottom-2 duration-300">
+          <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 bg-accent-glow/10 rounded-lg shrink-0">
+                <FileText size={16} className="text-accent-glow" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-primary truncate" title={file.name}>{file.name}</p>
+                <p className="text-[11px] text-tertiary">
+                  {parsedData ? `${parsedData.allRows.length} rows • ${parsedData.headers.length} columns` : 'Parsing...'}
+                  {selectedSheet ? ` • ${selectedSheet}` : ''}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleNext}
+              disabled={!parsedData}
+              className="shrink-0 h-[44px] bg-fg-primary text-void rounded-xl font-display font-bold text-[14px] px-6 hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center gap-2 group"
+            >
+              Continue to Mapping <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
             </button>
           </div>
         </div>
@@ -814,7 +982,7 @@ export default function Upload() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-surface-raised border border-default p-4 rounded-xl shadow-[var(--shadow-card)]">
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-success"></div><span className="text-sm text-primary font-medium">{processedData.filter(d => d.status === 'clean').length} Ready</span></div>
-              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-warning"></div><span className="text-sm text-primary font-medium">{processedData.filter(d => d.status === 'warning').length} Warnings</span></div>
+              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-accent-glow"></div><span className="text-sm text-primary font-medium">{processedData.filter(d => d.info?.length > 0).length} New Students</span></div>
               <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-danger"></div><span className="text-sm text-primary font-medium">{processedData.filter(d => d.status === 'error').length} Errors</span></div>
             </div>
 
@@ -825,8 +993,10 @@ export default function Upload() {
               >
                 <Sparkles size={16} className="text-accent-glow" /> Scan for Gaps
               </button>
-              <button onClick={handleNext} disabled={processedData.some(d => d.status === 'error') || processedData.length === 0} className="bg-fg-primary text-void rounded-lg px-6 py-2.5 font-display font-bold text-sm hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center gap-2 group shadow-[0_0_20px_rgba(255,255,255,0.1)]">
-                Confirm & Import {processedData.length} Records<ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+              <button onClick={handleNext} disabled={processedData.filter(d => d.status === 'clean').length === 0} className="bg-fg-primary text-void rounded-lg px-6 py-2.5 font-display font-bold text-sm hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center gap-2 group shadow-[0_0_20px_rgba(255,255,255,0.1)]">
+                Confirm & Import {processedData.filter(d => d.status === 'clean').length} Records
+                {processedData.some(d => d.status === 'error') && <span className="text-[10px] font-normal opacity-60">({processedData.filter(d => d.status === 'error').length} skipped)</span>}
+                <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
               </button>
             </div>
           </div>
@@ -866,7 +1036,7 @@ export default function Upload() {
                 </thead>
                 <tbody className="divide-y divide-subtle">
                   {processedData.map((row, i) => (
-                    <tr key={i} className={`hover:bg-surface-raised transition-colors ${row.status === 'error' ? 'bg-danger/5' : row.status === 'warning' ? 'bg-warning/5' : ''}`}>
+                    <tr key={i} className={`hover:bg-surface-raised transition-colors ${row.status === 'error' ? 'bg-danger/5' : ''}`}>
                       <td className="p-4"><div className={`w-2 h-8 rounded-full ${row.status === 'clean' ? 'bg-success' : row.status === 'warning' ? 'bg-warning' : 'bg-danger shadow-[0_0_10px_rgba(239,68,68,0.3)]'}`}></div></td>
                       <td className="p-4 text-sm text-primary font-medium">{row.student_name}</td>
                       <td className="p-4 text-sm text-tertiary font-mono">{row.usn}</td>
@@ -874,17 +1044,16 @@ export default function Upload() {
                       <td className="p-4"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase ${row.present ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>{row.present ? 'Present' : 'Absent'}</span></td>
                       <td className="p-4">
                         {row.issues.length > 0 ? (
-                          <div className="flex flex-col gap-2">
+                          <div className="flex flex-col gap-1">
                             {row.issues.map((iss, j) => (
-                              <div key={j} className="flex flex-col gap-1">
-                                <span className={`text-[11px] font-medium ${row.status === 'error' ? 'text-danger' : 'text-warning'}`}>{iss}</span>
-                                {iss.includes('found') && !iss.includes('Date') && (
-                                  <select className="bg-surface-inset border border-subtle rounded px-2 py-1 text-[10px] text-primary focus:border-accent-glow outline-none" onChange={(e) => handleResolveWarning(row.id, e.target.value)} defaultValue=""><option value="" disabled>Select Match...</option>{dbStudents.map(s => (<option key={s.id} value={s.id}>{s.name} ({s.usn})</option>))}<option value="new">Create as New Student</option></select>
-                                )}
-                              </div>
+                              <span key={j} className="text-[11px] font-medium text-danger">{iss}</span>
                             ))}
                           </div>
-                        ) : (<span className="text-xs text-tertiary">—</span>)}
+                        ) : row.info?.length > 0 ? (
+                          <span className="text-[11px] text-tertiary italic">{row.info[0]}</span>
+                        ) : (
+                          <span className="text-xs text-tertiary">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}

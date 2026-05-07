@@ -3,6 +3,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY
 export const genAI = new GoogleGenerativeAI(apiKey)
 
+// Model selection — using gemini-2.5-flash for reasoning tasks (thinking enabled, 1M context)
+const MAPPING_MODEL = 'gemini-2.5-flash';
+const INFERENCE_MODEL = 'gemini-2.5-flash';
+
 const SYSTEM_PROMPT = `
 You are a data mapping assistant for ForgeTrack. You will receive CSV/Excel column headers and sample data from an attendance sheet.
 Your task is to map each source column to one of these target fields: 
@@ -16,10 +20,10 @@ Your task is to map each source column to one of these target fields:
 - attendance_status (If there is a single column containing present/absent status)
 - IGNORE (For columns like SL No, invite links, or any data we don't track)
 
-CRITICAL: If the headers look like dates (e.g., "15/4/26", "2/12/25", "Jan-20"), then 'is_pivoted' is TRUE. In this case, map those specific date columns to "date" and flag them as pivoted.
+CRITICAL: If the headers look like dates (e.g., "15/4/26", "2/12/25", "Jan-20", or 5-digit Excel serial numbers like 45767), then 'is_pivoted' is TRUE. In this case, map those specific date columns to "date" and flag them as pivoted.
 
 Detect:
-1. date_format: e.g., "DD/MM/YYYY", "DD/M/YY", "YYYY-MM-DD", etc.
+1. date_format: e.g., "DD/MM/YYYY", "DD/M/YY", "YYYY-MM-DD", "EXCEL_SERIAL" etc.
 2. attendance_convention: e.g., "TRUE/FALSE", "P/A", "1/0", "Present/Absent", "Y/N".
 3. is_pivoted: true if dates are in headers, false if there is a 'date' column.
 
@@ -36,7 +40,7 @@ Return ONLY a JSON object with this schema:
 export async function analyzeCsvMapping(headers, sampleRows) {
   try {
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
+      model: MAPPING_MODEL,
       generationConfig: {
         responseMimeType: "application/json",
         temperature: 0,
@@ -62,12 +66,14 @@ export async function analyzeCsvMapping(headers, sampleRows) {
 export async function inferMissingDates(headers, scheduleDescription) {
   const INFERENCE_PROMPT = `
     You are a scheduling assistant. You will be given a list of headers from an attendance sheet and a description of the class schedule.
-    Some headers are missing dates or use relative terms (e.g. "Session 1", "Week 1", or just empty strings).
+    Some headers are missing dates or use relative terms (e.g. "Session 1", "Week 1", "Day 1", or just empty strings).
+    Some headers may be 5-digit Excel serial numbers (e.g. 45767 = a specific date since 1900).
     
     Task:
-    1. Identify headers that likely represent session dates.
+    1. Identify headers that likely represent session dates (including Excel serial numbers and relative terms like "Day 1").
     2. Based on the schedule description (e.g. "Classes are every Tuesday and Thursday starting Aug 4 2025"), assign a specific YYYY-MM-DD date to each identified header.
-    3. Ensure the dates follow the chronological order of the headers.
+    3. For Excel serial numbers, convert them: Excel serial 1 = Jan 1, 1900. Add the serial - 2 days to that base (Excel has a leap year bug).
+    4. Ensure the dates follow the chronological order of the headers.
     
     Return ONLY a JSON object:
     {
@@ -78,7 +84,7 @@ export async function inferMissingDates(headers, scheduleDescription) {
 
   try {
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
+      model: INFERENCE_MODEL,
       generationConfig: {
         responseMimeType: "application/json",
         temperature: 0,
