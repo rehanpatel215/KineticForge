@@ -59,3 +59,45 @@ export async function analyzeCsvMapping(headers, sampleRows) {
   }
 }
 
+export async function inferMissingDates(headers, scheduleDescription) {
+  const INFERENCE_PROMPT = `
+    You are a scheduling assistant. You will be given a list of headers from an attendance sheet and a description of the class schedule.
+    Some headers are missing dates or use relative terms (e.g. "Session 1", "Week 1", or just empty strings).
+    
+    Task:
+    1. Identify headers that likely represent session dates.
+    2. Based on the schedule description (e.g. "Classes are every Tuesday and Thursday starting Aug 4 2025"), assign a specific YYYY-MM-DD date to each identified header.
+    3. Ensure the dates follow the chronological order of the headers.
+    
+    Return ONLY a JSON object:
+    {
+      "inferred_dates": { "original_header": "YYYY-MM-DD" },
+      "explanation": "brief reasoning"
+    }
+  `;
+
+  try {
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.0-flash",
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0,
+      }
+    });
+    
+    const prompt = `
+      Headers: ${JSON.stringify(headers)}
+      Schedule Description: "${scheduleDescription}"
+      
+      Infer the dates and return the JSON.
+    `;
+
+    const result = await model.generateContent([INFERENCE_PROMPT, prompt]);
+    const response = await result.response;
+    const text = response.text().replace(/```json|```/g, '');
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("Gemini Inference Error:", error);
+    throw error;
+  }
+}

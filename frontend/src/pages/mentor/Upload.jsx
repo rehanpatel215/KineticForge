@@ -16,7 +16,7 @@ import {
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { useNavigate } from 'react-router-dom';
-import { analyzeCsvMapping } from '../../lib/gemini';
+import { analyzeCsvMapping, inferMissingDates } from '../../lib/gemini';
 import { useAuth } from '../../components/auth/AuthContext';
 import { supabase } from '../../lib/supabase';
 
@@ -34,7 +34,7 @@ const TARGET_FIELDS = [
 export default function Upload() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [step, setStep] = useState(1); // 1: Upload, 2: Mapping, 3: Preview, 4: Result
+  const [step, setStep] = useState(1); // 1: Upload, 1.5: Sheet Select, 2: Mapping, 3: Preview, 4: Result
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState(null);
@@ -42,6 +42,19 @@ export default function Upload() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [mappingResult, setMappingResult] = useState(null);
   const [userMapping, setUserMapping] = useState({}); // { source: target }
+  
+  // Advanced States
+  const [availableSheets, setAvailableSheets] = useState([]);
+  const [selectedSheet, setSelectedSheet] = useState(null);
+  const [workbook, setWorkbook] = useState(null);
+  const [processedData, setProcessedData] = useState([]);
+  const [dbStudents, setDbStudents] = useState([]);
+  const [duplicateSessions, setDuplicateSessions] = useState([]);
+  const [showInferenceModal, setShowInferenceModal] = useState(false);
+  const [scheduleDescription, setScheduleDescription] = useState('');
+  const [inferredDateMap, setInferredDateMap] = useState({}); // { originalHeader: inferredDate }
+  const [gapResults, setGapResults] = useState(null);
+  
   const fileInputRef = useRef(null);
 
   const steps = [
@@ -123,18 +136,15 @@ export default function Upload() {
       reader.onload = (e) => {
         try {
           const data = new Uint8Array(e.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const allRows = XLSX.utils.sheet_to_json(worksheet);
-          const headers = XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0];
-
-          setParsedData({
-            headers: headers,
-            rows: allRows.slice(0, 5),
-            allRows: allRows,
-            type: 'excel'
-          });
+          const wb = XLSX.read(data, { type: 'array' });
+          setWorkbook(wb);
+          setAvailableSheets(wb.SheetNames);
+          
+          if (wb.SheetNames.length === 1) {
+            processExcelSheet(wb, wb.SheetNames[0]);
+          } else {
+            setStep(1.5);
+          }
         } catch (err) {
           setError('Failed to parse Excel file: ' + err.message);
         }
@@ -143,12 +153,33 @@ export default function Upload() {
     }
   };
 
+  const processExcelSheet = (wb, sheetName) => {
+    setSelectedSheet(sheetName);
+    const worksheet = wb.Sheets[sheetName];
+    const allRows = XLSX.utils.sheet_to_json(worksheet);
+    const headers = XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0];
+
+    setParsedData({
+      headers: headers,
+      rows: allRows.slice(0, 5),
+      allRows: allRows,
+      type: 'excel',
+      sheetName: sheetName
+    });
+    setStep(1);
+  };
+
   const removeFile = () => {
     setFile(null);
     setParsedData(null);
     setError(null);
     setMappingResult(null);
     setUserMapping({});
+    setAvailableSheets([]);
+    setSelectedSheet(null);
+    setWorkbook(null);
+    setInferredDateMap({});
+    setGapResults(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -163,7 +194,6 @@ export default function Upload() {
       setStep(2);
     } catch (err) {
       setError('AI mapping failed. You can still map columns manually.');
-      // Initialize empty mapping as fallback
       const fallbackMapping = {};
       parsedData.headers.forEach(h => fallbackMapping[h] = 'IGNORE');
       setUserMapping(fallbackMapping);
@@ -223,11 +253,10 @@ export default function Upload() {
     return bestMatch;
   };
 
-  const [processedData, setProcessedData] = useState([]);
-  const [dbStudents, setDbStudents] = useState([]);
-
   const parseDate = (dateStr, format) => {
     if (!dateStr) return null;
+    if (inferredDateMap[dateStr]) return inferredDateMap[dateStr];
+
     const f = format.toUpperCase();
     try {
       if (f === 'YYYY-MM-DD') return dateStr;
@@ -257,14 +286,60 @@ export default function Upload() {
     }
   };
 
+  const runGapAnalysis = async () => {
+    setIsAnalyzing(true);
+    try {
+      const currentStudentIds = new Set(processedData.map(d => d.matchedStudent?.id).filter(Boolean));
+      const missingStudents = dbStudents.filter(s => !currentStudentIds.has(s.id));
+      setGapResults(missingStudents);
+    } catch (err) {
+      setError('Gap analysis failed: ' + err.message);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleInferDates = async () => {
+    if (!scheduleDescription) return;
+    setIsAnalyzing(true);
+    try {
+      const headersToInfer = Object.keys(userMapping).filter(h => userMapping[h] === 'date');
+      const result = await inferMissingDates(headersToInfer, scheduleDescription);
+      setInferredDateMap(result.inferred_dates);
+      setShowInferenceModal(false);
+    } catch (err) {
+      setError('AI Date Inference failed: ' + err.message);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const validateData = async () => {
     setIsAnalyzing(true);
     try {
       const { data: students } = await supabase.from('students').select('*');
       setDbStudents(students || []);
+      
+      const distinctDatesInFile = [...new Set(
+        mappingResult.is_pivoted 
+          ? Object.keys(userMapping).filter(h => userMapping[h] === 'date').map(h => parseDate(h, mappingResult.date_format))
+          : parsedData.allRows.map(row => {
+              const sourceCol = Object.keys(userMapping).find(h => userMapping[h] === 'date');
+              return parseDate(row[sourceCol], mappingResult.date_format);
+            })
+      )].filter(Boolean);
+
+      const { data: existingSessions } = await supabase
+        .from('sessions')
+        .select('date, topic')
+        .in('date', distinctDatesInFile);
+      
+      setDuplicateSessions(existingSessions || []);
+
       const candidates = [];
       const isPivoted = mappingResult.is_pivoted;
       const dateColumns = isPivoted ? Object.keys(userMapping).filter(h => userMapping[h] === 'date') : [];
+      
       parsedData.allRows.forEach((row, rowIndex) => {
         if (Object.values(row).every(v => !v)) return;
         const getField = (fieldName) => {
@@ -295,6 +370,7 @@ export default function Upload() {
           if (present !== null) { candidates.push({ ...baseRecord, date, present }); }
         }
       });
+
       const validated = candidates.map(c => {
         const errors = [];
         const warnings = [];
@@ -338,7 +414,6 @@ export default function Upload() {
     }));
   };
 
-
   const handleMappingChange = (source, target) => {
     setUserMapping(prev => ({ ...prev, [source]: target }));
   };
@@ -357,7 +432,6 @@ export default function Upload() {
     setImportProgress(0);
 
     try {
-      // 1. Create Import Log entry
       const { data: logEntry, error: logError } = await supabase
         .from('import_log')
         .insert([{
@@ -374,9 +448,8 @@ export default function Upload() {
 
       if (logError) throw logError;
 
-      // 2. Resolve/Create Sessions
       const distinctDates = [...new Set(processedData.map(d => d.date))];
-      const sessionMap = {}; // date -> id
+      const sessionMap = {};
 
       for (const d of distinctDates) {
         const monthNum = new Date(d).getMonth() + 1;
@@ -396,9 +469,8 @@ export default function Upload() {
         sessionMap[d] = sess.id;
       }
 
-      // 3. Resolve/Create Students
       const studentsToUpsert = [];
-      const studentMap = {}; // usn -> id
+      const studentMap = {};
 
       processedData.forEach(row => {
         if (!row.matchedStudent && row.usn) {
@@ -413,7 +485,6 @@ export default function Upload() {
         }
       });
 
-      // Dedup studentsToUpsert by USN
       const uniqueNewStudents = Array.from(new Map(studentsToUpsert.map(s => [s.usn, s])).values());
 
       if (uniqueNewStudents.length > 0) {
@@ -426,7 +497,6 @@ export default function Upload() {
         newStudents.forEach(s => studentMap[s.usn] = s.id);
       }
 
-      // 4. Batch Import Attendance
       const batches = [];
       for (let i = 0; i < processedData.length; i += 50) {
         batches.push(processedData.slice(i, i + 50));
@@ -441,7 +511,7 @@ export default function Upload() {
           present: row.present,
           marked_by: 'csv_import',
           import_id: logEntry.id
-        })).filter(r => r.student_id && r.session_id); // Safety check
+        })).filter(r => r.student_id && r.session_id);
 
         const { error: attError } = await supabase
           .from('attendance')
@@ -453,7 +523,6 @@ export default function Upload() {
         setImportProgress(Math.round((importedCount / processedData.length) * 100));
       }
 
-      // 5. Update Log to completed
       await supabase
         .from('import_log')
         .update({ 
@@ -491,8 +560,6 @@ export default function Upload() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 max-w-7xl mx-auto pb-12">
-      
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-display-md text-primary font-display mb-2">Import Attendance</h1>
@@ -510,12 +577,11 @@ export default function Upload() {
             }}
             className="text-sm font-medium text-tertiary hover:text-primary transition-colors flex items-center gap-1"
           >
-            {step === 4 && importResults ? 'Start Over' : `Back to ${steps[step - 2].label}`}
+            {step === 4 && importResults ? 'Start Over' : `Back to ${steps[Math.floor(step) - 1]?.label}`}
           </button>
         )}
       </div>
 
-      {/* Steps Indicator */}
       <div className="flex items-center justify-between bg-surface bg-card-gradient border border-subtle rounded-xl p-4 shadow-[var(--shadow-card)]">
         {steps.map((s, i) => (
           <React.Fragment key={s.id}>
@@ -532,7 +598,6 @@ export default function Upload() {
         ))}
       </div>
 
-      {/* Step 1: Upload */}
       {step === 1 && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
@@ -582,13 +647,32 @@ export default function Upload() {
                   <div className="p-2 bg-surface rounded-lg border border-default"><FileText size={20} className="text-accent-glow" /></div>
                   <div>
                     <p className="text-sm font-medium text-primary">{parsedData?.allRows.length} rows detected</p>
-                    <p className="text-caption text-tertiary">{parsedData?.headers.length} columns identified</p>
+                    <p className="text-caption text-tertiary">
+                      {parsedData?.headers.length} columns identified
+                      {selectedSheet && ` • Sheet: ${selectedSheet}`}
+                    </p>
                   </div>
                 </div>
                 <button onClick={removeFile} className="p-2 hover:bg-surface rounded-md text-tertiary hover:text-danger transition-colors"><X size={20} /></button>
               </div>
             )}
-            {/* History Table */}
+            {step === 1.5 && (
+              <div className="bg-surface border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] animate-in slide-in-from-bottom-4">
+                <h3 className="text-h3 text-primary mb-4 flex items-center gap-2"><Layers size={18} className="text-accent-glow" /> Select Worksheet</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {availableSheets.map(sheet => (
+                    <button 
+                      key={sheet}
+                      onClick={() => processExcelSheet(workbook, sheet)}
+                      className="p-4 text-left bg-surface-inset border border-default rounded-xl hover:border-accent-glow hover:bg-surface-raised transition-all group"
+                    >
+                      <p className="text-sm font-medium text-primary group-hover:text-accent-glow">{sheet}</p>
+                      <p className="text-[10px] text-tertiary uppercase tracking-widest mt-1">Excel Sheet</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {importHistory.length > 0 && (
               <div className="bg-surface border border-subtle rounded-xl overflow-hidden shadow-[var(--shadow-card)]">
                 <div className="p-4 border-b border-subtle"><h3 className="text-xs font-bold text-primary uppercase tracking-widest">Recent Imports</h3></div>
@@ -635,7 +719,6 @@ export default function Upload() {
         </div>
       )}
 
-      {/* Step 2: Mapping */}
       {step === 2 && (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 animate-in slide-in-from-right-4 duration-500">
           <div className="lg:col-span-3 space-y-6">
@@ -690,6 +773,17 @@ export default function Upload() {
                     <option value="P/A">P/A</option><option value="TRUE/FALSE">TRUE/FALSE</option><option value="1/0">1/0</option><option value="Present/Absent">Present/Absent</option><option value="Y/N">Y/N</option>
                   </select>
                 </div>
+                <div className="pt-4 border-t border-subtle">
+                  <button 
+                    onClick={() => setShowInferenceModal(true)}
+                    className="w-full py-2 px-3 bg-surface-raised border border-dashed border-accent-glow/50 text-accent-glow rounded-lg text-xs font-medium hover:bg-accent-glow/10 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Sparkles size={14} /> Infer Dates with AI
+                  </button>
+                  {Object.keys(inferredDateMap).length > 0 && (
+                    <p className="text-[10px] text-success mt-2 text-center">✓ {Object.keys(inferredDateMap).length} dates inferred</p>
+                  )}
+                </div>
               </div>
             </div>
             <button onClick={handleNext} className="w-full h-[56px] bg-fg-primary text-void rounded-xl font-display font-bold text-[16px] hover:bg-[#E5E5E7] transition-all flex items-center justify-center gap-2 group">
@@ -699,19 +793,64 @@ export default function Upload() {
         </div>
       )}
 
-      {/* Step 3: Preview & Validate */}
       {step === 3 && (
         <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
+          {duplicateSessions.length > 0 && (
+            <div className="p-4 bg-warning/10 border border-warning/20 rounded-xl flex items-start gap-4 shadow-lg shadow-warning/5 animate-in slide-in-from-top-2">
+              <AlertTriangle size={20} className="text-warning shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-bold text-warning uppercase tracking-widest mb-1">Potential Duplicates Detected</h4>
+                <p className="text-xs text-secondary leading-relaxed">
+                  We found {duplicateSessions.length} sessions that already exist in the database for the dates in this file: 
+                  <span className="font-medium text-primary ml-1">
+                    {duplicateSessions.map(s => s.date).join(', ')}
+                  </span>.
+                  Continuing will overwrite attendance for these dates.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-surface-raised border border-default p-4 rounded-xl shadow-[var(--shadow-card)]">
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-success"></div><span className="text-sm text-primary font-medium">{processedData.filter(d => d.status === 'clean').length} Ready</span></div>
               <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-warning"></div><span className="text-sm text-primary font-medium">{processedData.filter(d => d.status === 'warning').length} Warnings</span></div>
               <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-danger"></div><span className="text-sm text-primary font-medium">{processedData.filter(d => d.status === 'error').length} Errors</span></div>
             </div>
-            <button onClick={handleNext} disabled={processedData.some(d => d.status === 'error') || processedData.length === 0} className="bg-fg-primary text-void rounded-lg px-6 py-2.5 font-display font-bold text-sm hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center gap-2 group shadow-[0_0_20px_rgba(255,255,255,0.1)]">
-              Confirm & Import {processedData.length} Records<ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
-            </button>
+
+            <div className="flex gap-3">
+              <button 
+                onClick={runGapAnalysis}
+                className="px-4 py-2.5 bg-surface-raised text-primary border border-default rounded-lg text-sm font-medium hover:bg-surface transition-all flex items-center gap-2"
+              >
+                <Sparkles size={16} className="text-accent-glow" /> Scan for Gaps
+              </button>
+              <button onClick={handleNext} disabled={processedData.some(d => d.status === 'error') || processedData.length === 0} className="bg-fg-primary text-void rounded-lg px-6 py-2.5 font-display font-bold text-sm hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center gap-2 group shadow-[0_0_20px_rgba(255,255,255,0.1)]">
+                Confirm & Import {processedData.length} Records<ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+              </button>
+            </div>
           </div>
+
+          {gapResults && (
+            <div className="p-6 bg-accent-glow/5 border border-accent-glow/20 rounded-xl animate-in slide-in-from-top-4">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-sm font-bold text-accent-glow uppercase tracking-widest flex items-center gap-2">
+                  <Info size={16} /> Gap Analysis: {gapResults.length} Students Missing
+                </h4>
+                <button onClick={() => setGapResults(null)} className="text-xs text-tertiary hover:text-primary">Dismiss</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {gapResults.map(s => (
+                  <div key={s.id} className="px-3 py-1 bg-surface-raised border border-default rounded-full text-xs text-secondary flex items-center gap-2">
+                    <span className="font-medium text-primary">{s.name}</span>
+                    <span className="text-[10px] font-mono text-tertiary">{s.usn}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-4 text-[11px] text-tertiary">Note: These students exist in your database but were not found in the current sheet. You may want to check if they were missed during data entry.</p>
+            </div>
+          )}
+
           <div className="bg-surface border border-subtle rounded-xl overflow-hidden shadow-[var(--shadow-card)]">
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
               <table className="w-full text-left border-collapse">
@@ -756,7 +895,6 @@ export default function Upload() {
         </div>
       )}
 
-      {/* Step 4: Import Progress & Results */}
       {step === 4 && (
         <div className="flex flex-col items-center justify-center py-20 text-center animate-in zoom-in-95 duration-500">
           {!importResults ? (
@@ -787,8 +925,82 @@ export default function Upload() {
         </div>
       )}
 
-
-
+      <InferenceModal 
+        isOpen={showInferenceModal}
+        onClose={() => setShowInferenceModal(false)}
+        onConfirm={handleInferDates}
+        description={scheduleDescription}
+        setDescription={setScheduleDescription}
+        loading={isAnalyzing}
+      />
     </div>
+  );
+}
+
+function InferenceModal({ isOpen, onClose, onConfirm, description, setDescription, loading }) {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-void/80 backdrop-blur-md animate-in fade-in duration-300">
+      <div className="bg-surface bg-card-gradient border border-subtle rounded-2xl p-8 max-w-lg w-full shadow-[var(--shadow-focus)]">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-accent-glow/10 flex items-center justify-center text-accent-glow">
+            <Sparkles size={24} />
+          </div>
+          <div>
+            <h3 className="text-h3 text-primary">AI Date Inference</h3>
+            <p className="text-caption text-secondary">Gemini will suggest dates for your columns.</p>
+          </div>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-label text-tertiary uppercase tracking-widest mb-2">Schedule Description</label>
+            <textarea 
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. Classes are every Monday and Wednesday starting from August 4th, 2025."
+              className="w-full bg-surface-inset border border-default rounded-xl p-4 min-h-[120px] text-primary text-sm focus:border-accent-glow outline-none transition-all placeholder:text-tertiary"
+            />
+          </div>
+          <div className="bg-surface-raised/50 border border-default p-4 rounded-xl">
+            <p className="text-[11px] text-tertiary leading-relaxed">
+              <Info size={12} className="inline mr-1 mb-0.5" />
+              Tip: Be specific about the start date and the days of the week. The AI will map headers in order.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-4 mt-8">
+          <button onClick={onClose} className="flex-1 px-6 py-3 bg-surface-raised text-primary border border-default rounded-xl font-medium hover:bg-surface transition-colors">Cancel</button>
+          <button 
+            onClick={onConfirm} 
+            disabled={!description || loading}
+            className="flex-[2] px-6 py-3 bg-fg-primary text-void rounded-xl font-bold hover:bg-[#E5E5E7] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loading ? <RefreshCw className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
+            {loading ? 'Inferring...' : 'Apply AI Dates'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AlertTriangle(props) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
   );
 }

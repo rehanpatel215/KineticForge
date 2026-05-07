@@ -150,7 +150,7 @@ export default function Login() {
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="w-full bg-surface-inset border border-default rounded-md px-4 h-[44px] text-primary text-[14px] focus:border-accent-glow focus:shadow-[var(--shadow-focus)] outline-none placeholder:text-tertiary"
-                  placeholder={activeTab === 'mentor' ? "nischay@theboringpeople.in" : "4SH24CS001"}
+                  placeholder={activeTab === 'mentor' ? "Enter your email" : "Enter your USN"}
                 />
               </div>
 

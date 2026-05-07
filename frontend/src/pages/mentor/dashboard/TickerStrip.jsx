@@ -30,7 +30,7 @@ export default function TickerStrip() {
           .select('date')
           .order('date', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         // 4. Overall Attendance %
         const { count: totalPresent } = await supabase
