@@ -62,75 +62,95 @@ export default function TodayAttendanceCard() {
 
   if (loading) {
     return (
-      <div className="bg-surface bg-card-gradient border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] h-full">
-        <h2 className="text-h3 text-secondary mb-4 flex items-center gap-2">
-          <UserCheck size={20} className="text-tertiary" /> Today's Attendance
+      <div className="glass-card rounded-2xl p-6 h-full border border-white/5">
+        <h2 className="text-micro text-tertiary mb-6 flex items-center gap-2">
+          <UserCheck size={14} className="text-tertiary/50" /> Synchronization
         </h2>
         <div className="animate-pulse space-y-4">
-          <div className="h-4 bg-surface-inset rounded w-full"></div>
-          <div className="h-10 bg-surface-inset rounded w-full mt-4"></div>
+          <div className="h-10 bg-white/5 rounded-xl w-full"></div>
+          <div className="h-6 bg-white/5 rounded-lg w-full mt-4"></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-surface bg-card-gradient border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] h-full flex flex-col">
-      <h2 className="text-h3 text-secondary mb-6 flex items-center gap-2">
-        <UserCheck size={20} className="text-accent-glow" /> Today's Attendance
-      </h2>
+    <div className="glass-card rounded-3xl p-8 h-full flex flex-col group border border-white/5 hover:border-accent-glow/20 transition-all duration-500 relative overflow-hidden">
+      {/* Decorative Glow */}
+      <div className="absolute -left-20 -bottom-20 w-64 h-64 bg-accent-glow/5 blur-[100px] pointer-events-none group-hover:bg-accent-glow/10 transition-colors" />
+
+      <div className="flex justify-between items-start mb-8">
+        <div className="px-3 py-1 rounded-full bg-accent-glow/10 border border-accent-glow/20 text-accent-glow text-[10px] font-bold uppercase tracking-widest">
+          Attendance Metrics
+        </div>
+        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-tertiary group-hover:text-accent-glow transition-colors">
+          <UserCheck size={20} />
+        </div>
+      </div>
 
       {!data ? (
-        <div className="flex-1 flex items-center justify-center text-center">
-          <p className="text-body text-secondary">No session scheduled for today.</p>
+        <div className="flex-1 flex flex-col items-center justify-center text-center py-8 relative z-10">
+          <p className="text-secondary font-medium italic">Waiting for session initialization...</p>
         </div>
       ) : !data.marked ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-center">
-          <p className="text-body text-secondary mb-6">Attendance not yet marked.</p>
+        <div className="flex-1 flex flex-col items-center justify-center text-center py-8 relative z-10">
+          <div className="w-16 h-16 rounded-3xl bg-white/5 border border-white/5 flex items-center justify-center mb-6">
+            <UserCheck size={32} className="text-tertiary/30" />
+          </div>
+          <p className="text-secondary font-medium mb-8">Attendance data stream not yet active.</p>
           <button 
             onClick={() => navigate('/attendance')}
-            className="bg-fg-primary text-void rounded-md px-5 py-3 font-body font-medium text-[14px] hover:bg-[#E5E5E7] transition-colors"
+            className="h-12 px-8 bg-accent-glow text-void rounded-2xl font-bold text-sm shadow-neon hover:scale-[1.02] active:scale-[0.98] transition-all"
           >
             Mark Attendance
           </button>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col">
-          <div className="flex justify-between items-end mb-2">
-            <span className="text-display-md text-primary">{data.presentCount} <span className="text-h3 text-tertiary">/ {data.totalCount}</span></span>
-            <span className="text-body text-secondary font-medium">Present</span>
+        <div className="flex-1 flex flex-col relative z-10">
+          <div className="flex justify-between items-end mb-4">
+            <div className="flex items-baseline gap-2">
+              <span className="text-display-md text-primary tracking-tighter group-hover:neon-glow transition-all">{data.presentCount}</span>
+              <span className="text-h3 text-tertiary/50">/ {data.totalCount}</span>
+            </div>
+            <span className="text-xs font-bold text-accent-glow uppercase tracking-widest mb-2">Verified Units</span>
           </div>
           
           {/* Progress Bar */}
-          <div className="w-full h-2 bg-surface-inset rounded-full overflow-hidden mb-6">
+          <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden mb-8 border border-white/5 relative">
             <div 
-              className="h-full bg-success transition-all duration-500 ease-out"
+              className="h-full bg-gradient-to-r from-accent-glow to-accent-blue transition-all duration-1000 ease-out relative"
               style={{ width: `${(data.presentCount / Math.max(1, data.totalCount)) * 100}%` }}
-            ></div>
+            >
+              <div className="absolute inset-0 bg-white/20 animate-pulse" />
+            </div>
           </div>
 
           <div className="flex-1">
-            <div className="text-label text-tertiary uppercase tracking-widest mb-3">Absentees</div>
+            <div className="text-micro text-tertiary mb-4">Missing Units Detected</div>
             {data.absentees.length === 0 ? (
-              <p className="text-sm text-success">Everyone is present! 🎉</p>
+              <div className="glass-card p-4 rounded-2xl border-success/20 bg-success/5 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-success/20 flex items-center justify-center text-success">🎉</div>
+                <p className="text-sm text-success font-medium">All units accounted for. 100% efficiency.</p>
+              </div>
             ) : (
-              <ul className="space-y-2">
-                {data.absentees.slice(0, 5).map((name, i) => (
-                  <li key={i} className="text-sm text-secondary flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-danger"></span>
-                    {name}
-                  </li>
+              <div className="grid grid-cols-2 gap-2">
+                {data.absentees.slice(0, 4).map((name, i) => (
+                  <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-white/5 border border-white/5 group/item hover:bg-white/10 transition-colors">
+                    <span className="w-1.5 h-1.5 rounded-full bg-danger shadow-[0_0_8px_rgba(244,63,94,0.6)]"></span>
+                    <span className="text-xs text-secondary truncate">{name}</span>
+                  </div>
                 ))}
-                {data.absentees.length > 5 && (
-                  <li className="text-sm text-tertiary italic ml-3">
-                    + {data.absentees.length - 5} more
-                  </li>
+                {data.absentees.length > 4 && (
+                  <div className="flex items-center justify-center px-3 py-2 rounded-xl border border-white/5 text-[10px] text-tertiary uppercase font-bold tracking-widest bg-white/[0.02]">
+                    + {data.absentees.length - 4} More
+                  </div>
                 )}
-              </ul>
+              </div>
             )}
           </div>
         </div>
       )}
     </div>
+
   );
 }

@@ -80,52 +80,66 @@ export default function ProgramOverviewCard() {
 
   if (loading) {
     return (
-      <div className="bg-surface bg-card-gradient border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] h-full">
-        <h2 className="text-h3 text-secondary mb-4 flex items-center gap-2">
-          <BarChart3 size={20} className="text-tertiary" /> Program Overview
+      <div className="glass-card rounded-2xl p-6 h-full border border-white/5">
+        <h2 className="text-micro text-tertiary mb-6 flex items-center gap-2">
+          <BarChart3 size={14} className="text-tertiary/50" /> Analytics Engine
         </h2>
         <div className="animate-pulse space-y-4">
-          <div className="h-4 bg-surface-inset rounded w-1/2"></div>
-          <div className="h-4 bg-surface-inset rounded w-3/4 mt-4"></div>
+          <div className="h-10 bg-white/5 rounded-xl w-3/4"></div>
+          <div className="h-6 bg-white/5 rounded-lg w-full mt-4"></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-surface bg-card-gradient border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] h-full flex flex-col">
-      <h2 className="text-h3 text-secondary mb-6 flex items-center gap-2">
-        <BarChart3 size={20} className="text-accent-glow" /> Program Overview
-      </h2>
+    <div className="glass-card rounded-3xl p-8 h-full flex flex-col group border border-white/5 hover:border-accent-glow/20 transition-all duration-500 relative overflow-hidden">
+      {/* Decorative Glow */}
+      <div className="absolute -right-20 -bottom-20 w-64 h-64 bg-accent-glow/5 blur-[100px] pointer-events-none group-hover:bg-accent-glow/10 transition-colors" />
+
+      <div className="flex justify-between items-start mb-8">
+        <div className="px-3 py-1 rounded-full bg-accent-glow/10 border border-accent-glow/20 text-accent-glow text-[10px] font-bold uppercase tracking-widest">
+          Performance Analytics
+        </div>
+        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-tertiary group-hover:text-accent-glow transition-colors">
+          <BarChart3 size={20} />
+        </div>
+      </div>
 
       {data && (
-        <div className="flex-1 flex flex-col justify-between space-y-6">
-          <div className="flex items-center justify-between p-4 bg-surface-inset border border-default rounded-lg">
-            <span className="text-body text-secondary">Average Attendance</span>
-            <span className="text-h2 text-primary">{data.avgAttendance}%</span>
+        <div className="flex-1 flex flex-col justify-between space-y-8 relative z-10">
+          <div className="glass-card p-6 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between group/metric overflow-hidden relative">
+             <div className="absolute inset-0 bg-accent-glow/5 translate-x-full group-hover/metric:translate-x-0 transition-transform duration-700 ease-out" />
+             <div className="relative">
+               <div className="text-micro text-tertiary mb-1">Fleet Average</div>
+               <div className="text-sm text-secondary font-medium uppercase tracking-widest">Attendance</div>
+             </div>
+             <div className="text-display-sm text-primary font-bold group-hover/metric:neon-glow transition-all relative">{data.avgAttendance}%</div>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-6">
             {data.highest && (
-              <div>
-                <div className="text-label text-tertiary uppercase tracking-widest mb-1">Top Performer</div>
-                <div className="flex items-center justify-between">
-                  <span className="text-body text-primary truncate pr-4">{data.highest.name}</span>
-                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full font-body font-semibold text-[12px] bg-success-bg text-success border border-success-border whitespace-nowrap">
-                    {Math.round(data.highest.percentage)}%
-                  </span>
+              <div className="group/item">
+                <div className="text-[10px] text-tertiary uppercase tracking-[0.2em] mb-2 font-bold flex items-center gap-2">
+                   <div className="w-1 h-1 rounded-full bg-success shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+                   Apex Performer
+                </div>
+                <div className="flex items-center justify-between glass-card p-3 rounded-xl border-white/5 hover:bg-white/5 transition-all">
+                  <span className="text-sm text-primary font-medium truncate pr-4">{data.highest.name}</span>
+                  <span className="text-xs font-bold text-success neon-glow">{Math.round(data.highest.percentage)}%</span>
                 </div>
               </div>
             )}
             
             {data.lowest && (
-              <div>
-                <div className="text-label text-tertiary uppercase tracking-widest mb-1">Needs Attention</div>
-                <div className="flex items-center justify-between">
-                  <span className="text-body text-primary truncate pr-4">{data.lowest.name}</span>
-                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full font-body font-semibold text-[12px] bg-danger-bg text-danger border border-danger-border whitespace-nowrap">
-                    {Math.round(data.lowest.percentage)}%
-                  </span>
+              <div className="group/item">
+                <div className="text-[10px] text-tertiary uppercase tracking-[0.2em] mb-2 font-bold flex items-center gap-2">
+                   <div className="w-1 h-1 rounded-full bg-danger shadow-[0_0_8px_rgba(244,63,94,0.8)]" />
+                   System Alert
+                </div>
+                <div className="flex items-center justify-between glass-card p-3 rounded-xl border-white/5 hover:bg-white/5 transition-all">
+                  <span className="text-sm text-primary font-medium truncate pr-4">{data.lowest.name}</span>
+                  <span className="text-xs font-bold text-danger">{Math.round(data.lowest.percentage)}%</span>
                 </div>
               </div>
             )}
@@ -133,5 +147,6 @@ export default function ProgramOverviewCard() {
         </div>
       )}
     </div>
+
   );
 }

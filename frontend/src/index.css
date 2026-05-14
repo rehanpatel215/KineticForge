@@ -1,27 +1,28 @@
 @import "tailwindcss";
 
 @theme {
-  /* Colors */
-  --color-void: #07070B;
-  --color-canvas: #0B0B11;
-  --color-surface: #111118;
-  --color-surface-raised: #16161F;
-  --color-surface-inset: #0E0E14;
+  /* Colors - Deep Navy / Midnight Blue Palette */
+  --color-void: #020205;
+  --color-canvas: #05050A;
+  --color-surface: rgba(17, 20, 29, 0.4);
+  --color-surface-raised: rgba(26, 31, 46, 0.6);
+  --color-surface-inset: rgba(14, 16, 24, 0.8);
   
-  --color-border-subtle: rgba(255,255,255,0.06);
-  --color-border-default: rgba(255,255,255,0.10);
-  --color-border-strong: rgba(255,255,255,0.16);
+  --color-border-subtle: rgba(0, 210, 255, 0.08);
+  --color-border-default: rgba(0, 210, 255, 0.15);
+  --color-border-strong: rgba(0, 210, 255, 0.3);
   
   --color-fg-primary: #F5F5F7;
-  --color-fg-secondary: #8A8A94;
-  --color-fg-tertiary: #52525B;
+  --color-fg-secondary: #94A3B8;
+  --color-fg-tertiary: #64748B;
   
   /* Aliases for common usage */
   --color-primary: var(--color-fg-primary);
   --color-secondary: var(--color-fg-secondary);
   --color-tertiary: var(--color-fg-tertiary);
   
-  --color-accent-glow: #6366F1;
+  --color-accent-glow: #00D2FF;
+  --color-accent-blue: #0084FF;
   
   --color-success: #10B981;
   --color-success-bg: rgba(16,185,129,0.12);
@@ -43,12 +44,18 @@
   /* Border Radius */
   --radius-xl: 1.125rem;
   --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
 
-  /* Backgrounds */
-  --background-image-cosmic-glow: radial-gradient(ellipse 600px 300px at 50% -100px, rgba(99,102,241,0.18), rgba(99,102,241,0) 70%);
-  --background-image-card-gradient: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 50%);
-  --background-image-dot-grid: radial-gradient(rgba(255,255,255,0.025) 1px, transparent 1px);
-  --background-size-dot-grid: 24px 24px;
+  /* Backgrounds & Glassmorphism */
+  --background-image-cosmic-glow: radial-gradient(ellipse 800px 400px at 50% -100px, rgba(0, 210, 255, 0.15), rgba(0, 132, 255, 0) 80%);
+  --background-image-card-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 100%);
+  --background-image-dot-grid: radial-gradient(rgba(0, 210, 255, 0.05) 1px, transparent 1px);
+  --background-size-dot-grid: 32px 32px;
+  
+  /* Shadows & Glows */
+  --shadow-neon: 0 0 20px rgba(0, 210, 255, 0.2);
+  --shadow-neon-strong: 0 0 35px rgba(0, 132, 255, 0.4);
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
 @utility text-display-hero {
@@ -129,8 +136,34 @@
   text-transform: uppercase;
 }
 
+@utility glass-panel {
+  background: rgba(11, 14, 20, 0.4);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(0, 210, 255, 0.1);
+  box-shadow: var(--shadow-glass);
+}
+
+@utility glass-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+  &:hover {
+    border-color: rgba(0, 210, 255, 0.2);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+    box-shadow: 0 8px 32px -1px rgba(0, 210, 255, 0.1);
+    transform: translateY(-2px);
+  }
+}
+
+@utility neon-glow {
+  text-shadow: 0 0 10px rgba(0, 210, 255, 0.4);
+}
+
 body {
-  background: var(--color-void, #07070B);
+  background: var(--color-void, #020205);
   color: var(--color-fg-primary, #F5F5F7);
   font-family: var(--font-body);
 }
@@ -139,3 +172,4 @@ body {
   background-image: var(--background-image-cosmic-glow);
   min-height: 100vh;
 }
+

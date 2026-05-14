@@ -83,82 +83,94 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-void bg-[url('var(--glow-cosmic)')] bg-no-repeat bg-[center_top_-100px] flex items-center justify-center p-4">
-      <div className="bg-surface bg-card-gradient border border-subtle rounded-2xl p-12 max-w-[440px] w-full shadow-[var(--shadow-card)]">
+    <div className="min-h-screen bg-void flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Background Glows */}
+      <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-accent-glow/10 blur-[120px] rounded-full pointer-events-none" />
+      <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-accent-blue/10 blur-[120px] rounded-full pointer-events-none" />
+      <div className="absolute inset-0 bg-[var(--background-image-dot-grid)] bg-[length:var(--background-size-dot-grid)] pointer-events-none opacity-20" />
+
+      <div className="glass-panel rounded-3xl p-10 max-w-[460px] w-full border border-white/10 shadow-neon relative z-10 animate-in fade-in zoom-in-95 duration-500">
         
-        <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-surface-raised rounded-xl flex items-center justify-center border border-default mx-auto mb-4">
-            <span className="text-accent-glow font-display font-bold text-xl">F</span>
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 bg-gradient-to-br from-accent-glow to-accent-blue rounded-2xl flex items-center justify-center shadow-neon mx-auto mb-6 group relative overflow-hidden">
+            <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <span className="text-white font-display font-black text-3xl italic tracking-tighter">K</span>
           </div>
-          <h1 className="text-h2 text-primary font-display">ForgeTrack</h1>
+          <h1 className="text-display-sm text-primary font-display tracking-tight leading-none mb-2">Kinetic<span className="text-accent-glow">Forge</span></h1>
+          <p className="text-secondary text-sm font-medium tracking-wide">Enter the control matrix</p>
         </div>
 
         {needsPasswordChange ? (
           <form onSubmit={handlePasswordChange} className="space-y-6">
-            <div className="bg-warning-bg border border-warning-border p-4 rounded-lg mb-6">
-              <p className="text-warning text-caption">
-                For security reasons, please change your default password before continuing.
+            <div className="bg-warning/10 border border-warning/20 p-4 rounded-2xl mb-6 flex gap-3">
+              <div className="w-5 h-5 rounded-full bg-warning/20 flex items-center justify-center text-warning text-xs font-bold">!</div>
+              <p className="text-warning text-xs leading-relaxed font-medium">
+                Security protocol: Please initialize a new password to continue.
               </p>
             </div>
-            <div>
-              <label className="block text-label text-secondary mb-2 uppercase tracking-widest">New Password</label>
+            <div className="space-y-2">
+              <label className="block text-micro text-tertiary px-1">New System Password</label>
               <input 
                 type="password"
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full bg-surface-inset border border-default rounded-md px-4 h-[44px] text-primary text-[14px] focus:border-accent-glow focus:shadow-[var(--shadow-focus)] outline-none"
-                placeholder="Enter new password"
+                className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 h-[52px] text-primary text-sm focus:border-accent-glow/50 focus:bg-white/[0.06] focus:shadow-neon outline-none transition-all"
+                placeholder="Initialize new password"
               />
             </div>
             
-            {error && <p className="text-danger text-caption">{error}</p>}
+            {error && (
+              <div className="text-danger text-[11px] font-bold uppercase tracking-wider text-center animate-shake">
+                {error}
+              </div>
+            )}
             
             <button 
               type="submit" 
               disabled={loading}
-              className="w-full bg-fg-primary text-void rounded-md px-5 py-3 font-body font-medium text-[14px] hover:bg-[#E5E5E7] transition-colors disabled:opacity-50"
+              className="w-full h-14 bg-accent-glow text-void rounded-2xl font-bold text-sm shadow-neon hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 mt-4"
             >
-              {loading ? 'Updating...' : 'Update Password & Sign In'}
+              {loading ? 'Initializing...' : 'Verify & Synchronize'}
             </button>
           </form>
         ) : (
           <>
-            <div className="flex bg-surface-inset p-1 rounded-lg mb-8">
+            <div className="flex bg-white/[0.03] p-1.5 rounded-2xl mb-10 border border-white/5">
               <button 
                 onClick={() => setActiveTab('mentor')}
-                className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'mentor' ? 'bg-surface-raised text-primary shadow-[var(--shadow-card)]' : 'text-secondary hover:text-primary'}`}
+                className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest rounded-xl transition-all ${activeTab === 'mentor' ? 'bg-white/10 text-primary shadow-neon border border-white/10' : 'text-tertiary hover:text-secondary'}`}
               >
-                Mentor Login
+                Mentor
               </button>
               <button 
                 onClick={() => setActiveTab('student')}
-                className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'student' ? 'bg-surface-raised text-primary shadow-[var(--shadow-card)]' : 'text-secondary hover:text-primary'}`}
+                className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest rounded-xl transition-all ${activeTab === 'student' ? 'bg-white/10 text-primary shadow-neon border border-white/10' : 'text-tertiary hover:text-secondary'}`}
               >
-                Student Login
+                Student
               </button>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-6">
-              <div>
-                <label className="block text-label text-secondary mb-2 uppercase tracking-widest">
-                  {activeTab === 'mentor' ? 'Email Address' : 'USN'}
+              <div className="space-y-2">
+                <label className="block text-micro text-tertiary px-1 uppercase">
+                  {activeTab === 'mentor' ? 'Command Email' : 'System ID (USN)'}
                 </label>
                 <input 
                   type={activeTab === 'mentor' ? 'email' : 'text'}
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  className="w-full bg-surface-inset border border-default rounded-md px-4 h-[44px] text-primary text-[14px] focus:border-accent-glow focus:shadow-[var(--shadow-focus)] outline-none placeholder:text-tertiary"
-                  placeholder={activeTab === 'mentor' ? "Enter your email" : "Enter your USN"}
+                  className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 h-[52px] text-primary text-sm focus:border-accent-glow/50 focus:bg-white/[0.06] focus:shadow-neon outline-none transition-all placeholder:text-tertiary/50"
+                  placeholder={activeTab === 'mentor' ? "commander@forge.local" : "Node-001"}
                 />
               </div>
 
-              <div>
-                <div className="flex justify-between mb-2">
-                  <label className="block text-label text-secondary uppercase tracking-widest">Password</label>
+              <div className="space-y-2">
+                <div className="flex justify-between px-1">
+                  <label className="block text-micro text-tertiary uppercase">Access Key</label>
                   {activeTab === 'mentor' && (
-                    <a href="#" className="text-caption text-accent-glow hover:underline">Forgot password?</a>
+                    <a href="#" className="text-[10px] text-accent-glow font-bold uppercase tracking-widest hover:neon-glow transition-all">Recover</a>
                   )}
                 </div>
                 <input 
@@ -166,19 +178,23 @@ export default function Login() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-surface-inset border border-default rounded-md px-4 h-[44px] text-primary text-[14px] focus:border-accent-glow focus:shadow-[var(--shadow-focus)] outline-none"
+                  className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 h-[52px] text-primary text-sm focus:border-accent-glow/50 focus:bg-white/[0.06] focus:shadow-neon outline-none transition-all"
                   placeholder="••••••••"
                 />
               </div>
 
-              {error && <p className="text-danger text-caption">{error}</p>}
+              {error && (
+                <div className="text-danger text-[11px] font-bold uppercase tracking-wider text-center">
+                  Authentication Failed: {error}
+                </div>
+              )}
 
               <button 
                 type="submit" 
                 disabled={loading}
-                className="w-full bg-fg-primary text-void rounded-md px-5 py-3 font-body font-medium text-[14px] hover:bg-[#E5E5E7] transition-colors disabled:opacity-50"
+                className="w-full h-14 bg-accent-glow text-void rounded-2xl font-bold text-sm shadow-neon hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 mt-4"
               >
-                {loading ? 'Signing in...' : 'Sign In'}
+                {loading ? 'Authenticating...' : 'Sign In'}
               </button>
             </form>
           </>
@@ -187,3 +203,4 @@ export default function Login() {
     </div>
   );
 }
+

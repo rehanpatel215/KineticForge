@@ -75,48 +75,60 @@ export default function RecentActivityCard() {
 
   if (loading) {
     return (
-      <div className="bg-surface bg-card-gradient border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] h-full">
-        <h2 className="text-h3 text-secondary mb-4 flex items-center gap-2">
-          <Activity size={20} className="text-tertiary" /> Recent Activity
+      <div className="glass-card rounded-2xl p-6 h-full border border-white/5">
+        <h2 className="text-micro text-tertiary mb-6 flex items-center gap-2">
+          <Activity size={14} className="text-tertiary/50" /> Log Stream
         </h2>
         <div className="animate-pulse space-y-4">
-          <div className="h-4 bg-surface-inset rounded w-full"></div>
-          <div className="h-4 bg-surface-inset rounded w-full"></div>
-          <div className="h-4 bg-surface-inset rounded w-3/4"></div>
+          <div className="h-4 bg-white/5 rounded-lg w-full"></div>
+          <div className="h-4 bg-white/5 rounded-lg w-full"></div>
+          <div className="h-4 bg-white/5 rounded-lg w-3/4"></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-surface bg-card-gradient border border-subtle rounded-xl p-6 shadow-[var(--shadow-card)] h-full flex flex-col">
-      <h2 className="text-h3 text-secondary mb-6 flex items-center gap-2">
-        <Activity size={20} className="text-accent-glow" /> Recent Activity
-      </h2>
+    <div className="glass-card rounded-3xl p-8 h-full flex flex-col group border border-white/5 hover:border-accent-glow/20 transition-all duration-500 relative overflow-hidden">
+      {/* Decorative Glow */}
+      <div className="absolute -left-20 -top-20 w-64 h-64 bg-accent-glow/5 blur-[100px] pointer-events-none group-hover:bg-accent-glow/10 transition-colors" />
+
+      <div className="flex justify-between items-start mb-8">
+        <div className="px-3 py-1 rounded-full bg-accent-glow/10 border border-accent-glow/20 text-accent-glow text-[10px] font-bold uppercase tracking-widest">
+          Event Log Stream
+        </div>
+        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-tertiary group-hover:text-accent-glow transition-colors">
+          <Activity size={20} />
+        </div>
+      </div>
 
       {activities.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-center">
-          <p className="text-body text-secondary">No recent activity.</p>
+        <div className="flex-1 flex items-center justify-center text-center py-8 relative z-10">
+          <p className="text-secondary italic">No telemetry data recorded.</p>
         </div>
       ) : (
-        <ul className="flex-1 space-y-5">
-          {activities.map((activity, i) => (
-            <li key={i} className="flex items-start gap-3">
-              <div className="mt-0.5">
-                {activity.type === 'import' ? (
-                  <UploadCloud size={16} className="text-tertiary" />
-                ) : (
-                  <CheckSquare size={16} className="text-tertiary" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-body-sm text-primary line-clamp-2">{activity.description}</p>
-                <p className="text-caption text-tertiary mt-1">{formatRelativeTime(activity.timestamp)}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="flex-1 relative z-10">
+          <div className="absolute left-4 top-2 bottom-2 w-px bg-white/5" />
+          <ul className="space-y-6">
+            {activities.map((activity, i) => (
+              <li key={i} className="flex items-start gap-4 relative group/item">
+                <div className="mt-1 w-8 h-8 rounded-lg bg-white/5 border border-white/5 flex items-center justify-center z-10 group-hover/item:bg-accent-glow/20 transition-all">
+                  {activity.type === 'import' ? (
+                    <UploadCloud size={14} className="text-tertiary group-hover/item:text-accent-glow" />
+                  ) : (
+                    <CheckSquare size={14} className="text-tertiary group-hover/item:text-accent-glow" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-primary leading-snug group-hover/item:text-accent-glow transition-colors">{activity.description}</p>
+                  <p className="text-[10px] text-tertiary mt-1.5 font-bold uppercase tracking-widest">{formatRelativeTime(activity.timestamp)}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
+
   );
 }
